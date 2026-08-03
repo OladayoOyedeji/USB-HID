@@ -1,0 +1,11 @@
+#include "stm32f4xx.h"
+
+void initclocks();
+void configPinMode();
+void setAF(void);
+void configUart1Pins();
+void configUart1();
+void initUART();
+void transmitUart(uint8_t data);
+void transmitStrUart(char * str);
+void recieveUart();

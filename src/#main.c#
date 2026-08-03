@@ -1,0 +1,44 @@
+#include "i2c.h"
+
+void initclocks(void)
+{
+  RCC-> 
+}
+
+int main()
+{
+  initclocks();
+  configPinMode();
+  setAF();
+  i2c_init();
+  
+  // address for mpu6050
+  uint8_t slave_address = 0x68;
+  uint8_t wake_cmd[2] = {0x6B, 0x00};
+
+  // wake up
+  i2c_transmit(slave_address, wake_cmd, 2);
+  
+  while (1)
+    {
+      uint8_t raw[14];
+      i2c_write_read(slave_address, 0x3B, raw, 14); // read accel/gyro/temp
+
+      int16_t accel_x = (raw[0] << 8) | raw[1];
+      int16_t accel_y = (raw[2] << 8) | raw[3];
+      int16_t accel_z = (raw[4] << 8) | raw[5];
+
+      uart_print("AX:"); uart_print_num(accel_x);
+      uart_print(" AY:"); uart_print_num(accel_y);
+      uart_print(" AZ:"); uart_print_num(accel_z);
+      uart_print(" GX:"); uart_print_num(gyro_x);
+      uart_print(" GY:"); uart_print_num(gyro_y);
+      uart_print(" GZ:"); uart_print_num(gyro_z);
+      uart_println("");
+
+      delay_ms(100);   
+    }
+  return 0;
+  
+}
+
