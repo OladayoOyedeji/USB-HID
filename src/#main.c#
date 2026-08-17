@@ -1,44 +1,59 @@
 #include "i2c.h"
+#include "uart.h"
+#include <stdio.h>
+#include <stdint.h>
 
-void initclocks(void)
-{
-  RCC-> 
-}
+int main(void) {
+    // init everything
+    initclocks();
+    configPinMode();
+    setAF();
+    i2c_init();
+    uart_init();   // added
 
-int main()
-{
-  initclocks();
-  configPinMode();
-  setAF();
-  i2c_init();
-  
-  // address for mpu6050
-  uint8_t slave_address = 0x68;
-  uint8_t wake_cmd[2] = {0x6B, 0x00};
+    uint8_t slave_address = 0x68;
 
-  // wake up
-  i2c_transmit(slave_address, wake_cmd, 2);
-  
-  while (1)
-    {
-      uint8_t raw[14];
-      i2c_write_read(slave_address, 0x3B, raw, 14); // read accel/gyro/temp
-
-      int16_t accel_x = (raw[0] << 8) | raw[1];
-      int16_t accel_y = (raw[2] << 8) | raw[3];
-      int16_t accel_z = (raw[4] << 8) | raw[5];
-
-      uart_print("AX:"); uart_print_num(accel_x);
-      uart_print(" AY:"); uart_print_num(accel_y);
-      uart_print(" AZ:"); uart_print_num(accel_z);
-      uart_print(" GX:"); uart_print_num(gyro_x);
-      uart_print(" GY:"); uart_print_num(gyro_y);
-      uart_print(" GZ:"); uart_print_num(gyro_z);
-      uart_println("");
-
-      delay_ms(100);   
+    // verify sensor is alive
+    uint8_t who_am_i = 0;
+    i2c_write_read(slave_address, 0x75, &who_am_i, 1);
+    if (who_am_i != 0x68) {
+        uart_print("MPU6050 not found!\r\n");
+        while(1);
     }
-  return 0;
-  
-}
+    uart_print("MPU6050 OK\r\n");
 
+    // wake up sensor
+    uint8_t wake_cmd[2] = {0x6B, 0x00};
+    i2c_transmit(slave_address, wake_cmd, 2);
+
+    while (1) {
+        uint8_t raw[14];
+        i2c_write_read(slave_address, 0x3B, raw, 14);
+
+        // parse accelerometer
+        int16_t accel_x = (raw[0]  << 8) | raw[1];
+        int16_t accel_y = (raw[2]  << 8) | raw[3];
+        int16_t accel_z = (raw[4]  << 8) | raw[5];
+        // raw[6] raw[7] = temperature, skip
+
+        // parse gyroscope  ← added
+        int16_t gyro_x  = (raw[8]  << 8) | raw[9];
+        int16_t gyro_y  = (raw[10] << 8) | raw[11];
+        int16_t gyro_z  = (raw[12] << 8) | raw[13];
+
+        // convert to real units  ← added
+        float gyro_x_dps = gyro_x / 131.0f;
+        float gyro_y_dps = gyro_y / 131.0f;
+        float gyro_z_dps = gyro_z / 131.0f;
+
+        // print  ← fixed
+        char buf[64];
+        sprintf(buf, "GX:%.1f GY:%.1f GZ:%.1f\r\n",
+                gyro_x_dps, gyro_y_dps, gyro_z_dps);
+        uart_print(buf);
+
+        delay(10);  // 100Hz  ← fixed
+    }
+
+    return 0;
+}
