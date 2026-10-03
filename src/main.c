@@ -1,3 +1,6 @@
+// File: main.c
+// Author: Oladayo Oyedeji
+
 #include "i2c.h"
 #include "uart.h"
 #include <stdio.h>
@@ -12,57 +15,24 @@ void delay_ms(volatile uint32_t ms) {
     }
 }
 
+
 int main(void) {
-    // init everything
-    initclocks();
-    configPinMode();
-    setAF();
+    clock_init();
+    gpio_init();
     i2c_init();
-    uart_init();   // ← added
-
-    uint8_t slave_address = 0x68;
-
-    // verify sensor is alive
-    uint8_t who_am_i = 0;
-    i2c_write_read(slave_address, 0x75, &who_am_i, 1);
-    if (who_am_i != 0x68) {
-        uart_print("MPU6050 not found!\r\n");
-        while(1);
-    }
-    uart_print("MPU6050 OK\r\n");
-
-    // wake up sensor
-    uint8_t wake_cmd[2] = {0x6B, 0x00};
-    i2c_transmit(slave_address, wake_cmd, 2);
+    tusb_init();        // TinyUSB's own init — sets up the USB peripheral
 
     while (1) {
-        uint8_t raw[14];
-        i2c_write_read(slave_address, 0x3B, raw, 14);
+        tud_task();      // pump USB state machine — always first
 
-        // parse accelerometer
-        int16_t accel_x = (raw[0]  << 8) | raw[1];
-        int16_t accel_y = (raw[2]  << 8) | raw[3];
-        int16_t accel_z = (raw[4]  << 8) | raw[5];
-        // raw[6] raw[7] = temperature, skip
-
-        // parse gyroscope  ← added
-        int16_t gyro_x  = (raw[8]  << 8) | raw[9];
-        int16_t gyro_y  = (raw[10] << 8) | raw[11];
-        int16_t gyro_z  = (raw[12] << 8) | raw[13];
-
-        // convert to real units  ← added
-        float gyro_x_dps = gyro_x / 131.0f;
-        float gyro_y_dps = gyro_y / 131.0f;
-        float gyro_z_dps = gyro_z / 131.0f;
-
-        // print  ← fixed
-        char buf[64];
-        sprintf(buf, "GX:%.1f GY:%.1f GZ:%.1f\r\n",
-                gyro_x_dps, gyro_y_dps, gyro_z_dps);
-        uart_print(buf);
-
-        delay_ms(10);  // 100Hz  ← fixed
+        static uint32_t last = 0;
+        if (millis() - last >= 1) {           // 1kHz
+            last = millis();
+            i2c_write_read(slave_address, 0x3B, raw, 14);
+            int16_t gyro_data[3] = { gyro_x, gyro_y, gyro_z };
+            if (tud_hid_ready()) {
+                tud_hid_report(0, gyro_data, sizeof(gyro_data));
+            }
+        }
     }
-
-    return 0;
 }
