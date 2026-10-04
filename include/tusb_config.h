@@ -1,6 +1,41 @@
 // File: tusb_config.h
 // Author: Oladayo Oyedeji
 
+#ifndef TUSB_CONFIG_H
+#define TUSB_CONFIG_H
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+    
+#define CFG_TUSB_MCU  OPT_MCU_STM32F4
+#define CFG_TUSB_OS
+#define CFG_TUSB_RHPORTO_MODE
+
+#ifndef CFG_TUSB_MEM_SECTION
+#define CFG_TUSB_MEM_SECTION
+#endif
+
+#ifndef CFG_TUSB_MEM_ALIGN
+#define CFG_TUSB_MEM_ALIGN
+#endif
+
+#define CFG_TUD_ENDPOINT0_SIZE
+
+#define CFG_TUD_HID
+#define CFG_TUD_CDC
+#define CFG_TUD_MSC
+#define CFG_TUD_MIDI
+#define CFG_TUD_VENDOR
+    
+#define CFG_TUD_HID_EP_BUFSIZE
+    
+#ifdef __cplusplus
+}
+#endif
+
+#endif
 tusb_desc_device_t const desc_device = {
     .bLength            = sizeof(tusb_desc_device_t),  // 18
     .bDescriptorType    = TUSB_DESC_DEVICE,             // 0x01

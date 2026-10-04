@@ -3,35 +3,58 @@
 
 #include "i2c.h"
 #include "uart.h"
-#include <stdio.h>
+#include "sysyem_init.h"
+#include "tusb.h"
 #include <stdint.h>
 
-void delay_ms(volatile uint32_t ms) {
-    for(uint32_t i = 0; i < ms; i++) {
-        SysTick->LOAD = 16000 - 1;
-        SysTick->VAL  = 0;
-        SysTick->CTRL = 0x05;
-        while(!(SysTick->CTRL & (1 << 16)));
-    }
-}
-
-
-int main(void) {
-    clock_init();
-    gpio_init();
+int main()
+{
+    system_init(); // clock config
+    configure_pins(); // GPIO setup
     i2c_init();
-    tusb_init();        // TinyUSB's own init — sets up the USB peripheral
+    systick_init();
+    tusb_init(); // sets up the USB peripheral
 
-    while (1) {
-        tud_task();      // pump USB state machine — always first
+    const uint8_t slave_address = 0x68;
 
-        static uint32_t last = 0;
-        if (millis() - last >= 1) {           // 1kHz
-            last = millis();
-            i2c_write_read(slave_address, 0x3B, raw, 14);
-            int16_t gyro_data[3] = { gyro_x, gyro_y, gyro_z };
-            if (tud_hid_ready()) {
-                tud_hid_report(0, gyro_data, sizeof(gyro_data));
+    // check sensor status
+    uint8_t who_am_i = i2c_read(slave_address, 0x75);
+    if (who_am_i != 0x68)
+    {
+        uart_print("MPU6050 not found!\r\n");
+        while (1)
+        {
+            tud_task();
+        }
+    }
+
+    uart_print("MPU6050 OK\r\n");
+
+    //
+    i2c_write(slave_address, 0x6B, 0x00);
+
+    uint32_t last = 0;
+
+    while (1)
+    {
+        tud_task(); // pump USB state machine
+
+        if (get_tick() - last >= 1)
+        {
+            last = get_tick();
+
+            uint8_t raw[14];
+            i2c_read_multi(slave_address, 0x3B, raw, 14);
+
+            int16_t gyro_x = (int16_t)((raw[8] << 8) | raw[9]);
+            int16_t gyro_y = (int16_t)((raw[10] << 8) | raw[11]);
+            int16_t gyro_z = (int16_t)((raw[12] << 8) | raw[13]);
+
+            int16_t gyro_report[3] = {gyro_x, gyro_y, gyro_z};
+
+            if (tud_hid_ready())
+            {
+                tud_hid_report(0, gyro_report, sizeof(gyro_report));
             }
         }
     }
