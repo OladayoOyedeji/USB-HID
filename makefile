@@ -17,7 +17,7 @@ SRCS = $(wildcard ${SOURCEDIR}/*.c)
 OBJS = $(SRCS:.c=.o)
 
 all: firmware.bin
-
+	clean_o
 firmware.elf: $(OBJS)
 	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $@
 
@@ -30,8 +30,10 @@ flash: firmware.bin
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+clean_o:
+	rm -r $(OBJS)
 clean:
 	rm -rf firmware.*
-	rm -rf $(OBJS)
+	clean_o
 
 .PHONY: all clean flash
