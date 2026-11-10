@@ -1,65 +1,101 @@
 #include "uart.h"
 
-// we use PA9 - TX, PA10 - RX
-// set the clock to 1 and set the pin function to alternste function
-// which is 
-
-void initclocks()
+void uart_init(struct uart * uart, unsigned long baud)
 {
-  RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
-  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
-}
+    uint8_t af = 7;
+    uint16_t rx = 0, tx = 0;
+    uint32_t pclk = 0;
 
-void configPinMode()
-{
-  GPIOA->MODER |= ((2 << 18) | (2 << 20)); // set PA9 and PA10 AF
-  
-}
-
-// set the alternate function to uart or usart1 which is af7
-// each size of the peripherals is 4 bits
-// 0 -> 0 - 7
-// 1 -> 8 - 15
-void setAF()
-{
-  GPIOA->AFR[1] |= ((7 << 4) | (7 << 8));
-}
- 
-void configUart1Pins()
-{
-  configPinMode();
-
-  setAF();
-  
-}
-
-void transmitUart(uint8_t data)
-{
-  while (!(USART1->ISR & USART_ISR_TXE));
-
-  // transmit data register
-  USART1->TDR = data;
-}
-
-void transmitStrUart(char * str)
-{
-  while (*str)
+    if (uart == USART1)
     {
-      transmitUart(*str++);
+        RCC->APB2ENR_b.USART1EN = 1;
+        rx = PIN('A', 10);
+        tx = PIN('A', 9);
+        pclk = APB2_FREQUENCY;
+        
+    }
+    else if (uart == UART2)
+    {
+        RCC->APB1ENR_b.UART2EN = 1;
+        rx = PIN('A', 3);
+        tx = PIN('A', 2);
+        pclk = APB1_FREQUENCY;
+    }
+    
+    else if (uart == UART3)
+    {
+        RCC->APB1ENR_b.UART3EN = 1;
+        rx = PIN('B', 11);
+        tx = PIN('B', 10);
+        pclk = APB1_FREQUENCY;
+    }
+        
+    else if (uart == UART4)
+    {
+        af = 8;
+        RCC->APB1ENR_b.UART4EN = 1;
+        rx = PIN('C', 11);
+        tx = PIN('C', 10);
+        pclk = APB1_FREQUENCY;
+    }
+        
+    else if (uart == UART5)
+    {
+        af = 8;
+        RCC->APB1ENR_b.UART5EN = 1;
+        rx = PIN('C', 12);
+        tx = PIN('D', 2);
+        pclk = APB2_FREQUENCY;
+    }
+        
+    else if (uart == USART6)
+    {
+        af = 8;
+        RCC->APB2ENR_b.USART6EN = 1;
+        rx = PIN('C', 7);
+        tx = PIN('C', 6);
+        pclk = APB2_FREQUENCY;
+    }
+
+
+    gpio_set_mode(rx, GPIO_MODE_AF);
+    gpio_set_mode(tx, GPIO_MODE_AF);
+    gpio_set_af(rx, af);
+    gpio_set_af(tx, af);
+
+    uart->CR1 = 0;
+
+    uint32_t div = (pclk + (baud / 2)) / baud;
+    uart->BRR = div;
+
+    uart->CR1_b.RE = 1;
+    uart->CR1_b.TE = 1;
+    uart->CR1_b.UE = 1;
+}
+
+int uart_read_ready(struct uart * uart)
+{
+    return uart->SR_b.RXNE;
+}
+
+uint8_t uart_read_byte(struct uart * uart)
+{
+    return (uint8_t)(uart->DR & 255);
+}
+
+void uart_write_char(struct uart * uart, char ch)
+{
+    while (!uart->SR_b.TXE)
+        (void)0;
+
+    uart->DR = (uint32_t)ch;
+}
+
+void uart_write_buf(struct uart * uart, char * buf, size_t len)
+{
+    while (len-- > 0)
+    {
+        uart_write_char(uart, *(uint8_t *)buf++);
     }
 }
 
-void recieveUart()
-{
-  uint8_t rxData = 0;
-
-    // IF THERE IS DATA IN THE RECEIVE DATA REGISTER
-    // USART_ISR_RXNE EXPANDS TO (1 << 5)
-    if(USART1->ISR & USART_ISR_RXNE)
-    {
-        // READ DATA FROM THE REGISTER
-        rxData = USART1->RDR;
-    }
-
-    return rxData;
-}

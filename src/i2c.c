@@ -1,97 +1,214 @@
 #include "i2c.h"
 
-// we are using PB6 - SCL, PB7 - SDA
-
-void initclocks()
+void i2c_init(struct i2c * i2c)
 {
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
-    RCC->APB1ENR |= RCC_APB1ENR_I2C1EN;
-}
-
-void configPinMode()
-{
-    GPIOB->MODER |= ((2 << 12) | (2 << 14));
-
-    GPIOB->OTYPER |= (GPIO_OTYPER_OT6 | GPIO_OTYPER_OT7);   // open-drain
-    GPIOB->PUPDR  |= ((1 << 12) | (1 << 14));               // pull-up on pins 6,7
-  
-}
-
-void setAF()
-{
-    GPIOB->AFR[0] |= ((4 << (4 * 6)) | (4 << (4 * 7)));
-}
-
-void i2c_init()
-{
-    I2C->CR1 |= I2C_CR1_SWRST; // software reset
-    I2C->CR1 &= ~I2C_CR1_SWRST;
-
-    I2C1->CR1 = 16;
-
-    I2C1->CCR = 80;
-    I2C1->TRISE = 17;
-
-    I2C1->CR1 |= I2C_CR1_PE;
-}
-
-static int i2c_wait_flag(volatile uint32_t * reg, uint32_t flag)
-{
-    uint32_t timeout = I2C_TIMEOUT;
-    while (!(*reg & flag))
+    uint16_t sda = 0;
+    uint16_t scl = 0;
+    uint8_t scl_af = 4, sda_af = 4;
+    if (i2c == I2C1)
     {
-        if (--timeout == 0) return -1;
+        RCC->APB1ENR_b.I2C1EN = 1;
+        sda = PIN('B', 9);
+        scl = PIN('B', 8);
     }
+    else if (i2c == I2C2)
+    {
+        RCC->APB1ENR_b.I2C2EN = 1;
+        scl = PIN('B', 10);
+        sda = PIN('B', 3); sda_af = 9;
+    }
+    else if (i2c == I2C3)
+    {
+        RCC->APB1ENR_b.I2C3EN = 1;
+        scl = PIN('A', 8);
+        sda = PIN('C', 9);
+    
+    }
+    
 
+    gpio_set_mode(sda, GPIO_MODE_AF);
+    gpio_set_mode(scl, GPIO_MODE_AF);
+    gpio_set_af(sda, sda_af);
+    gpio_set_af(scl, scl_af);
+    gpio_set_open_drain(scl);
+    gpio_set_open_drain(sda);
+    gpio_set_pull_up(sda);
+    gpio_set_pull_up(scl);
+
+    i2c->CR1_b.PE = 0;
+    i2c->CR1_b.SWRST = 1;
+    i2c->CR1_b.SWRST = 0;
+
+    // Timing (assumes APB1 = 16 MHz, standard mode 100 kHz)
+    i2c->CR2_b.FREQ = APB1_FREQUENCY / 1000000;;       // APB1 clock in MHz
+    i2c->CCR_b.CCR = APB1_FREQUENCY / (2 * 100000);        // 16 MHz / (2 * 100 kHz)
+    i2c->TRISE_b.TRISE = (APB1_FREQUENCY / 1000000) + 1;    // (1000 ns / 62.5 ns) + 1
+
+    i2c->CR1_b.ACK = 1;
+    i2c->CR1_b.PE = 1;
+    
+}
+
+// (bus, dev_addr, reg, buffer, length)
+inline int i2c_read_data(struct i2c * i2c, uint8_t dev_addr, uint8_t reg, uint8_t * buf, size_t length)
+{
+    // wait until bus is not busy
+    WAIT(!(i2c->SR2_b.BUSY));
+
+    // set the slave register pointer
+    // enable ACK
+    i2c->CR1_b.ACK = 1;
+    // send start
+    i2c->CR1_b.START = 1;
+
+    // wait for start sent
+    WAIT(i2c->SR1_b.SB);
+
+    // put address in the data register
+    i2c->DR_b.DR = (dev_addr << 1) | WRITE;
+    WAIT2(i2c->SR1_b.ADDR, i2c->SR1_b.AF);
+
+    /* printf("written address into data register\n"); */
+    /* printf("dev_addr=0x%02x sent=0x%02x SR1=%04x\n", */
+    /*        dev_addr, (uint8_t)((dev_addr << 1) | WRITE), (unsigned)i2c->SR1); */
+    if (i2c->SR1_b.AF)
+    {
+        i2c->SR1_b.AF = 0;
+        i2c->CR1_b.STOP = 1;
+        return -2;
+    }
+    (void)i2c->SR1; (void)i2c->SR2;
+
+    WAIT(i2c->SR1_b.TxE);
+    i2c->DR_b.DR = reg;
+    WAIT(i2c->SR1_b.BTF);
+    
+    // phase 2:
+    if (length == 2)
+        i2c->CR1_b.POS = 1;
+    
+    i2c->CR1_b.START = 1;
+    WAIT(i2c->SR1_b.SB);
+
+    i2c->DR_b.DR = (dev_addr << 1) | READ;
+    
+    WAIT2(i2c->SR1_b.ADDR, i2c->SR1_b.AF);
+    (void)i2c->SR1; (void)i2c->SR2;
+
+    /* printf("read address into data register\n"); */
+    if (i2c->SR1_b.AF)
+    {
+        i2c->SR1_b.AF = 0;
+        i2c->CR1_b.POS = 0;
+        i2c->CR1_b.STOP = 1;
+        return -2;
+    }
+    
+    switch (length)
+    {
+        case 1:
+        {
+            i2c->CR1_b.ACK = 0;
+            (void)i2c->SR1; (void)i2c->SR2;
+            i2c->CR1_b.STOP = 1;
+            WAIT(i2c->SR1_b.RxNE);
+            buf[0] = i2c->DR_b.DR;
+            break;
+        }
+
+        case 2:
+        {
+            (void)i2c->SR1; (void)i2c->SR2;
+            i2c->CR1_b.ACK = 0;
+            WAIT(i2c->SR1_b.BTF);
+            i2c->CR1_b.STOP = 1;
+            buf[0] = i2c->DR_b.DR;
+            buf[1] = i2c->DR_b.DR;
+            i2c->CR1_b.POS = 0;
+            break;
+        }
+        default:
+        {
+            (void)i2c->SR1; (void)i2c->SR2;
+            /* i2c->SR1_b.ADDR = 0; */
+            size_t i = 0;
+            while (length - i > 3)
+            {
+                WAIT(i2c->SR1_b.RxNE);
+                buf[i++] = i2c->DR_b.DR;
+            }
+            
+            WAIT(i2c->SR1_b.BTF);
+            i2c->CR1_b.ACK = 0;
+            buf[i++] = i2c->DR_b.DR;
+            WAIT(i2c->SR1_b.BTF);
+            i2c->CR1_b.STOP = 1;
+            buf[i++] = i2c->DR_b.DR;
+            buf[i++] = i2c->DR_b.DR;
+        }
+    }
+    
+    i2c->CR1_b.ACK = 1;
     return 0;
 }
 
-static int i2c_start()
+inline int i2c_write_data(struct i2c * i2c, uint8_t dev_addr, uint8_t reg, uint8_t * buf, size_t length)
 {
-    I2C1->CR1 |= I2C_CR1_START;
-    return i2c_wait_flag((volatile uint32_t *)&I2C1->SR1, I2C_SR1_SB);
-}
+    if (length == 0)
+        return 1;
 
-static int i2c_send_addr(uint8_t addr7, uint8_t rw)
-{
-    I2C1->DR = (addr7 << 1) | rw;
-    if (i2c_wait_flag((volatile uint32_t *)&I2C1->SR1, I2C_SR1_ADDR) != 0)
-        return -1;
-    I2C1->SR1;
-    I2C1->SR2;
-    return 0;
-}
+    // wait until bus is not busy
+    WAIT(!(i2c->SR2_b.BUSY));
+    /* printf("bus not busy\n"); */
 
-static void i2c_stop(void)
-{
-    I2C1->CR1 |= I2C_CR1_STOP;
-}
+    // phase 1
+    // enable ACK
+    i2c->CR1_b.ACK = 1;
+    // send start
+    i2c->CR1_b.START = 1;
 
-int i2c_transmit(uint8_t slave_addr, uint8_t * data, uint16_t len)
-{
-    if (i2c_start() != 0) return -1;
-    if (i2c_send_addr(slave_addr, 0) != 0)
+    // wait for start sent
+    WAIT(i2c->SR1_b.SB);
+    /* printf("started\n"); */
+
+    // put address in the data register
+    i2c->DR_b.DR = (dev_addr << 1) | WRITE;
+    WAIT2(i2c->SR1_b.ADDR, i2c->SR1_b.AF);
+    /* printf("put address in data register\n"); */
+
+    if (i2c->SR1_b.AF)
     {
-        i2c_stop();
-        return -1;
+        i2c->SR1_b.AF = 0;
+        i2c->CR1_b.STOP = 1;
+        return -2;
+    }
+    (void)i2c->SR1; (void)i2c->SR2;
+
+    WAIT2(i2c->SR1_b.TxE, i2c->SR1_b.AF);
+    /* printf("is register is not empty in \n"); */
+    i2c->DR_b.DR = reg;
+
+    if (i2c->SR1_b.AF)
+    {
+        i2c->SR1_b.AF = 0;
+        i2c->CR1_b.STOP = 1;
+        return -2;
     }
 
-    for (uint16_t i = 0; i < len; i++)
+    for (size_t i = 0; i < length; ++i)
     {
-        if (i2c_send_byte(data[i]) != 0)
-	{
-
-            i2c_stop();
-            return -1;
-	}
-    }
-  
-    if (i2c_wait_flag((volatile uint32_t *)&I2C1->SR1, I2C_SR1_BTF) != 0)
-    {
-        i2c_stop();
-        return -1;
+        WAIT2(i2c->SR1_b.TxE, i2c->SR1_b.AF);
+        if (i2c->SR1_b.AF)
+        {
+            i2c->SR1_b.AF = 0;
+            i2c->CR1_b.STOP = 1;
+            return -2;
+        }
+        i2c->DR_b.DR = buf[i];
     }
 
-    i2c_stop();
+    WAIT2(i2c->SR1_b.BTF, i2c->SR1_b.AF);
+
+    i2c->CR1_b.STOP = 1;
     return 0;
 }
